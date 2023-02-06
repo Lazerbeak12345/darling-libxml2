@@ -72,7 +72,7 @@ struct _xmlXIncludeCtxt {
 
     int                 txtNr; /* number of unparsed documents */
     int                txtMax; /* size of unparsed documents tab */
-    xmlNodePtr        *txtTab; /* array of unparsed text nodes */
+    xmlChar *         *txtTab; /* array of unparsed text strings */
     xmlURL         *txturlTab; /* array of unparsed text URLs */
 
     xmlChar *             url; /* the current URL processed */
@@ -395,18 +395,22 @@ xmlXIncludeFreeContext(xmlXIncludeCtxtPtr ctxt) {
 	if (ctxt->incTab[i] != NULL)
 	    xmlXIncludeFreeRef(ctxt->incTab[i]);
     }
+    if (ctxt->incTab != NULL)
+	xmlFree(ctxt->incTab);
+    if (ctxt->txtTab != NULL) {
+	for (i = 0;i < ctxt->txtNr;i++) {
+	    if (ctxt->txtTab[i] != NULL)
+		xmlFree(ctxt->txtTab[i]);
+	}
+	xmlFree(ctxt->txtTab);
+    }
     if (ctxt->txturlTab != NULL) {
 	for (i = 0;i < ctxt->txtNr;i++) {
 	    if (ctxt->txturlTab[i] != NULL)
 		xmlFree(ctxt->txturlTab[i]);
 	}
-    }
-    if (ctxt->incTab != NULL)
-	xmlFree(ctxt->incTab);
-    if (ctxt->txtTab != NULL)
-	xmlFree(ctxt->txtTab);
-    if (ctxt->txturlTab != NULL)
 	xmlFree(ctxt->txturlTab);
+    }
     if (ctxt->base != NULL) {
         xmlFree(ctxt->base);
     }
@@ -758,13 +762,14 @@ xmlXIncludeRecurseDoc(xmlXIncludeCtxtPtr ctxt, xmlDocPtr doc,
  * Add a new txtument to the list
  */
 static void
-xmlXIncludeAddTxt(xmlXIncludeCtxtPtr ctxt, xmlNodePtr txt, const xmlURL url) {
+xmlXIncludeAddTxt(xmlXIncludeCtxtPtr ctxt, const xmlChar *txt,
+                  const xmlURL url) {
 #ifdef DEBUG_XINCLUDE
     xmlGenericError(xmlGenericErrorContext, "Adding text %s\n", url);
 #endif
     if (ctxt->txtMax == 0) {
 	ctxt->txtMax = 4;
-        ctxt->txtTab = (xmlNodePtr *) xmlMalloc(ctxt->txtMax *
+        ctxt->txtTab = (xmlChar **) xmlMalloc(ctxt->txtMax *
 		                          sizeof(ctxt->txtTab[0]));
         if (ctxt->txtTab == NULL) {
 	    xmlXIncludeErrMemory(ctxt, NULL, "processing text");
@@ -779,7 +784,7 @@ xmlXIncludeAddTxt(xmlXIncludeCtxtPtr ctxt, xmlNodePtr txt, const xmlURL url) {
     }
     if (ctxt->txtNr >= ctxt->txtMax) {
 	ctxt->txtMax *= 2;
-        ctxt->txtTab = (xmlNodePtr *) xmlRealloc(ctxt->txtTab,
+        ctxt->txtTab = (xmlChar **) xmlRealloc(ctxt->txtTab,
 	             ctxt->txtMax * sizeof(ctxt->txtTab[0]));
         if (ctxt->txtTab == NULL) {
 	    xmlXIncludeErrMemory(ctxt, NULL, "processing text");
@@ -792,7 +797,7 @@ xmlXIncludeAddTxt(xmlXIncludeCtxtPtr ctxt, xmlNodePtr txt, const xmlURL url) {
 	    return;
 	}
     }
-    ctxt->txtTab[ctxt->txtNr] = txt;
+    ctxt->txtTab[ctxt->txtNr] = xmlStrdup(txt);
     ctxt->txturlTab[ctxt->txtNr] = xmlStrdup(url);
     ctxt->txtNr++;
 }
@@ -1003,15 +1008,15 @@ xmlXIncludeCopyRange(xmlXIncludeCtxtPtr ctxt, xmlDocPtr target,
 		if (list == NULL) {
 		    list = tmp;
 		    listParent = cur->parent;
+		    last = tmp;
 		} else {
 		    if (level == lastLevel)
-			xmlAddNextSibling(last, tmp);
+			last = xmlAddNextSibling(last, tmp);
 		    else {
-			xmlAddChild(last, tmp);
+			last = xmlAddChild(last, tmp);
 			lastLevel = level;
 		    }
 		}
-		last = tmp;
 
 		if (index2 > 1) {
 		    end = xmlXIncludeGetNthChild(cur, index2 - 1);
@@ -1092,12 +1097,11 @@ xmlXIncludeCopyRange(xmlXIncludeCtxtPtr ctxt, xmlDocPtr target,
 	    }
 	    if (tmp != NULL) {
 		if (level == lastLevel)
-		    xmlAddNextSibling(last, tmp);
+		    last = xmlAddNextSibling(last, tmp);
 		else {
-		    xmlAddChild(last, tmp);
+		    last = xmlAddChild(last, tmp);
 		    lastLevel = level;
 		}
-		last = tmp;
 	    }
 	}
 	/*
@@ -1175,8 +1179,7 @@ xmlXIncludeCopyXPointer(xmlXIncludeCtxtPtr ctxt, xmlDocPtr target,
 				    if (last == NULL) {
 					list = last = tmp;
 				    } else {
-					xmlAddNextSibling(last, tmp);
-					last = tmp;
+					last = xmlAddNextSibling(last, tmp);
 				    }
 				    cur = cur->next;
 				    continue;
@@ -1848,7 +1851,7 @@ xmlXIncludeLoadTxt(xmlXIncludeCtxtPtr ctxt, const xmlChar *url, int nr) {
      */
     for (i = 0; i < ctxt->txtNr; i++) {
 	if (xmlStrEqual(URL, ctxt->txturlTab[i])) {
-	    node = xmlCopyNode(ctxt->txtTab[i], 1);
+            node = xmlNewText(ctxt->txtTab[i]);
 	    goto loaded;
 	}
     }
@@ -1937,7 +1940,7 @@ xinclude_multibyte_fallback:
 	xmlBufShrink(buf->buffer, len);
     }
     xmlFreeParserCtxt(pctxt);
-    xmlXIncludeAddTxt(ctxt, node, URL);
+    xmlXIncludeAddTxt(ctxt, node->content, URL);
     xmlFreeInputStream(inputStream);
 
 loaded:
@@ -2383,21 +2386,18 @@ xmlXIncludeDoProcess(xmlXIncludeCtxtPtr ctxt, xmlDocPtr doc, xmlNodePtr tree) {
      * First phase: lookup the elements in the document
      */
     cur = tree;
-    if (xmlXIncludeTestNode(ctxt, cur) == 1)
-	xmlXIncludePreProcessNode(ctxt, cur);
     while ((cur != NULL) && (cur != tree->parent)) {
 	/* TODO: need to work on entities -> stack */
-	if ((cur->children != NULL) &&
-	    (cur->children->type != XML_ENTITY_DECL) &&
-	    (cur->children->type != XML_XINCLUDE_START) &&
-	    (cur->children->type != XML_XINCLUDE_END)) {
-	    cur = cur->children;
-	    if (xmlXIncludeTestNode(ctxt, cur))
-		xmlXIncludePreProcessNode(ctxt, cur);
-	} else if (cur->next != NULL) {
+        if (xmlXIncludeTestNode(ctxt, cur) == 1) {
+            xmlXIncludePreProcessNode(ctxt, cur);
+        } else if ((cur->children != NULL) &&
+                   ((cur->type == XML_DOCUMENT_NODE) ||
+                    (cur->type == XML_ELEMENT_NODE))) {
+            cur = cur->children;
+            continue;
+        }
+	if (cur->next != NULL) {
 	    cur = cur->next;
-	    if (xmlXIncludeTestNode(ctxt, cur))
-		xmlXIncludePreProcessNode(ctxt, cur);
 	} else {
 	    if (cur == tree)
 	        break;
@@ -2407,8 +2407,6 @@ xmlXIncludeDoProcess(xmlXIncludeCtxtPtr ctxt, xmlDocPtr doc, xmlNodePtr tree) {
 		    break; /* do */
 		if (cur->next != NULL) {
 		    cur = cur->next;
-		    if (xmlXIncludeTestNode(ctxt, cur))
-			xmlXIncludePreProcessNode(ctxt, cur);
 		    break; /* do */
 		}
 	    } while (cur != NULL);
