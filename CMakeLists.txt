@@ -78,7 +78,7 @@ add_darling_library(xml2 SHARED ${xml2_SRCS})
 target_link_libraries(xml2 system icucore z)
 set_target_properties(xml2 PROPERTIES OUTPUT_NAME "xml2.2")
 target_link_options(xml2 PRIVATE
-	"-Wl,-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/Pregenerated Files/libxml2.exp"
+	"-Wl,-exported_symbols_list,\"${CMAKE_CURRENT_SOURCE_DIR}\"/Pregenerated Files/libxml2.exp"
 )
 make_fat(xml2)
 
